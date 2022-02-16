@@ -1,17 +1,34 @@
-import React from 'react';
-import ReactDOM from 'react-dom';
-import './index.css';
-import App from './App';
-import reportWebVitals from './reportWebVitals';
+import React from "react";
+import ReactDOM from "react-dom";
+import "./index.css";
+import App from "./App";
+import "./App.css";
+import { applyMiddleware, createStore } from "redux";
+import { composeWithDevTools } from "redux-devtools-extension";
+
+import {
+  useDispatch as _useDispatch,
+  useSelector as _useSelector,
+  TypedUseSelectorHook,
+} from "react-redux";
+import logger from "redux-logger";
+import { AppEvent } from "./event";
+import { sagaMiddleware, sagaSession } from "./effect";
+import { reducer, State } from "./state";
+
+export const useSelector: TypedUseSelectorHook<State> = _useSelector;
+export const useDispatch = _useDispatch as () => (event: AppEvent) => void;
+
+export const store = createStore(
+  reducer,
+  composeWithDevTools(applyMiddleware(sagaMiddleware, logger))
+);
+
+sagaMiddleware.run(sagaSession);
 
 ReactDOM.render(
   <React.StrictMode>
     <App />
   </React.StrictMode>,
-  document.getElementById('root')
+  document.getElementById("root")
 );
-
-// If you want to start measuring performance in your app, pass a function
-// to log results (for example: reportWebVitals(console.log))
-// or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
-reportWebVitals();
