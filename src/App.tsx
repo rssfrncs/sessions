@@ -28,19 +28,19 @@ function Session() {
     },
     [el]
   );
-
+  const sessionName = "room 001";
   return (
-    <div>
-      session
+    <div className="bg-slate-800 text-white w-full p-10 grid grid-flow-row auto-rows-max gap-5">
+      <h1 className="text-3xl font-bold">Welcome to {sessionName}</h1>
       <button
+        className="w-min bg-transparent hover:bg-slate-900 text-white font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded"
         onClick={() => void dispatch({ type: "[ui] clicked connect button" })}
       >
         {connected ? "disconnect" : "connect"}
       </button>
       <PublisherControls />
-      <Devices kind="videoinput" />
-      <Devices kind="audioinput" />
-      <div ref={setEl}></div>
+
+      <div className="aspect-video bg-slate-900" ref={setEl}></div>
       {subEls.map((el) => (
         <SubscriberVideo video={el} />
       ))}
@@ -57,7 +57,7 @@ function SubscriberVideo({ video }: { video: HTMLVideoElement }) {
     },
     [video]
   );
-  return <div ref={setEl}></div>;
+  return <div className="aspect-video bg-slate-900" ref={setEl}></div>;
 }
 
 function PublisherControls() {
@@ -69,9 +69,10 @@ function PublisherControls() {
   const sharingVideo = useSelector((state) => state.sharingVideo);
   const sharingAudio = useSelector((state) => state.sharingAudio);
   return (
-    <>
+    <div className="grid grid-flow-col auto-cols-max gap-5">
       {connected ? (
         <button
+          className="bg-transparent hover:bg-slate-900 text-white font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded"
           onClick={() =>
             void dispatch({
               // @ts-ignore ???
@@ -87,6 +88,7 @@ function PublisherControls() {
       {publishing ? (
         <>
           <button
+            className="bg-transparent hover:bg-slate-900 text-white font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded"
             onClick={() =>
               void dispatch({
                 type: sharingVideo
@@ -98,6 +100,7 @@ function PublisherControls() {
             {sharingVideo ? "mute" : "share"} video
           </button>
           <button
+            className="bg-transparent hover:bg-slate-900 text-white font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded"
             onClick={() =>
               void dispatch({
                 type: sharingAudio
@@ -108,9 +111,11 @@ function PublisherControls() {
           >
             {sharingAudio ? "mute" : "share"} audio
           </button>
+          <Devices kind="videoinput" />
+          <Devices kind="audioinput" />
         </>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -122,6 +127,7 @@ function Devices({ kind }: { kind: MediaDeviceKind }) {
   const dispatch = useDispatch();
   return publishing ? (
     <select
+      className="font-semibold py-2 px-4 border text-white bg-slate-900 border-blue-500 hover:border-transparent rounded"
       onChange={(e) =>
         void dispatch({
           type: "[ui] device selector changed",
