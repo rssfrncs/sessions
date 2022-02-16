@@ -1,13 +1,28 @@
 import "./App.css";
 import * as OT from "@opentok/client";
 import produce from "immer";
-import { applyMiddleware, createStore } from "redux";
+import { applyMiddleware, createStore, Middleware, MiddlewareAPI } from "redux";
 import SM, { eventChannel } from "redux-saga";
-import { all, call, fork, put, take, takeEvery } from "typed-redux-saga";
+import {
+  all,
+  call,
+  fork,
+  put,
+  select,
+  take,
+  takeEvery,
+  takeLatest,
+} from "typed-redux-saga";
 import { composeWithDevTools } from "redux-devtools-extension";
 
-import { Provider, useDispatch, useSelector } from "react-redux";
+import {
+  Provider,
+  useDispatch,
+  useSelector as _useSelector,
+  TypedUseSelectorHook,
+} from "react-redux";
 import { useCallback } from "react";
+import logger from "redux-logger";
 
 type State = {
   publisher: {
@@ -20,27 +35,51 @@ type State = {
   subscribers: {
     elements: Record<string, HTMLVideoElement>;
   };
+  devices: MediaDeviceInfo[];
+  selectedDevice: string;
+  sharingVideo: boolean;
+  sharingAudio: boolean;
 };
+
+const useSelector: TypedUseSelectorHook<State> = _useSelector;
 
 type Event =
   | {
-      type: "publisher video element created";
+      type: "[saga] publisher video element created";
       payload: {
         el: HTMLVideoElement;
       };
     }
   | {
-      type: "subscriber stream video element created";
+      type: "[saga] subscriber stream video element created";
       payload: {
         subscriber: OT.Subscriber;
         el: HTMLVideoElement;
       };
     }
   | {
+      type: "[ui] device selector changed";
+      payload: {
+        value: string;
+      };
+    }
+  | {
+      type: "[saga] devices changed" | "[saga] devices loaded";
+      payload: {
+        devices: MediaDeviceInfo[];
+      };
+    }
+  | {
       type:
-        | "connected to session"
-        | "publisher stream created"
-        | "publisher stream destroyed";
+        | "[saga] connected to session"
+        | "[saga] publisher stream created"
+        | "[saga] publisher stream destroyed"
+        | "[ui] clicked stop publishing button"
+        | "[ui] clicked connect button"
+        | "[ui] clicked mute video"
+        | "[ui] clicked share video"
+        | "[ui] clicked mute audio"
+        | "[ui] clicked share audio";
     };
 
 function reducer(
@@ -50,32 +89,61 @@ function reducer(
     subscribers: {
       elements: {},
     },
+    devices: [],
+    selectedDevice: "",
+    sharingVideo: false,
+    sharingAudio: false,
   },
   event: Event
 ) {
   return produce(state, (draft) => {
     switch (event.type) {
-      case "publisher video element created": {
+      case "[ui] clicked mute video": {
+        draft.sharingVideo = false;
+        break;
+      }
+      case "[ui] clicked share video": {
+        draft.sharingVideo = true;
+        break;
+      }
+      case "[ui] clicked mute audio": {
+        draft.sharingAudio = false;
+        break;
+      }
+      case "[ui] clicked share audio": {
+        draft.sharingAudio = true;
+        break;
+      }
+      case "[saga] devices changed":
+      case "[saga] devices loaded": {
+        draft.devices = event.payload.devices;
+        break;
+      }
+      case "[saga] publisher video element created": {
         // @ts-ignore
         draft.publisher.element = event.payload.el;
         break;
       }
-      case "subscriber stream video element created": {
+      case "[saga] subscriber stream video element created": {
         // @ts-ignore
         draft.subscribers.elements[event.payload.subscriber.id!] =
           event.payload.el;
         break;
       }
-      case "connected to session": {
+      case "[saga] connected to session": {
         draft.session.state = "connected";
         break;
       }
-      case "publisher stream created": {
+      case "[saga] publisher stream created": {
         draft.publisher.state = "publishing";
         break;
       }
-      case "publisher stream destroyed": {
+      case "[saga] publisher stream destroyed": {
         draft.publisher.state = "not publishing";
+        break;
+      }
+      case "[ui] device selector changed": {
+        draft.selectedDevice = event.payload.value;
         break;
       }
     }
@@ -86,28 +154,35 @@ const sagaMiddleware = SM();
 
 type PublisherEvent =
   | {
-      type: "publisher stream created";
+      type: "[saga] publisher stream created";
       payload: {
         stream: OT.Stream;
       };
     }
   | {
-      type: "publisher video element created";
+      type: "[saga] publisher video element created";
       payload: {
         el: HTMLVideoElement;
       };
     }
-  | { type: "publisher stream destroyed" };
+  | { type: "[saga] publisher stream destroyed" };
 function* sagaPublisher(session: OT.Session) {
   while (true) {
-    yield* take("clicked start publishing button");
-    // @ts-ignore
-    const publisher = OT.initPublisher({ insertDefaultUI: false });
+    yield* take("[ui] clicked start publishing button");
+    yield* fork(deviceWatcher);
+    const publishVideo = yield* select((state: State) => state.sharingVideo);
+    const publishAudio = yield* select((state: State) => state.sharingAudio);
+    const publisher = OT.initPublisher({
+      // @ts-ignore
+      insertDefaultUI: false,
+      publishVideo,
+      publishAudio,
+    });
     const channel = eventChannel<PublisherEvent>((emit) => {
       publisher.on({
         streamCreated: (event: any) => {
           emit({
-            type: "publisher stream created",
+            type: "[saga] publisher stream created",
             payload: {
               stream: event.stream,
             },
@@ -115,7 +190,7 @@ function* sagaPublisher(session: OT.Session) {
         },
         videoElementCreated: (event: any) => {
           emit({
-            type: "publisher video element created",
+            type: "[saga] publisher video element created",
             payload: {
               el: event.element,
             },
@@ -123,7 +198,7 @@ function* sagaPublisher(session: OT.Session) {
         },
         streamDestroyed: () => {
           emit({
-            type: "publisher stream destroyed",
+            type: "[saga] publisher stream destroyed",
           });
         },
       });
@@ -133,7 +208,19 @@ function* sagaPublisher(session: OT.Session) {
     yield* takeEvery(channel, function* (event) {
       yield* put(event);
     });
-    yield* take("clicked stop publishing button");
+    yield* takeLatest("[ui] clicked mute video", function* mutePublisher() {
+      publisher.publishVideo(false);
+    });
+    yield* takeLatest("[ui] clicked share video", function* unmutePublisher() {
+      publisher.publishVideo(true);
+    });
+    yield* takeLatest("[ui] clicked mute audio", function* mutePublisher() {
+      publisher.publishAudio(false);
+    });
+    yield* takeLatest("[ui] clicked share audio", function* unmutePublisher() {
+      publisher.publishAudio(true);
+    });
+    yield* take("[ui] clicked stop publishing button");
     session.unpublish(publisher);
     publisher.destroy();
   }
@@ -210,7 +297,7 @@ function* sagaSubscriberCreator(session: OT.Session) {
         )
     );
     yield* put({
-      type: "subscriber stream video element created",
+      type: "[saga] subscriber stream video element created",
       payload: {
         subscriber,
         el,
@@ -219,8 +306,43 @@ function* sagaSubscriberCreator(session: OT.Session) {
   });
 }
 
+function* deviceWatcher() {
+  console.log("go");
+  yield* call(() =>
+    navigator.mediaDevices.getUserMedia({
+      audio: true,
+      video: true,
+    })
+  );
+  const devices = yield* call(() => navigator.mediaDevices.enumerateDevices());
+  yield* put({
+    type: "[saga] devices loaded",
+    payload: {
+      devices,
+    },
+  });
+  const changeChannel = eventChannel<{ devices: MediaDeviceInfo[] }>((emit) => {
+    navigator.mediaDevices.ondevicechange = async () => {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      emit({ devices });
+    };
+    return () => {
+      navigator.mediaDevices.ondevicechange = null;
+    };
+  });
+  while (true) {
+    const { devices } = yield* take(changeChannel);
+    yield* put({
+      type: "[saga] devices changed",
+      payload: {
+        devices,
+      },
+    });
+  }
+}
+
 function* sagaSession() {
-  yield* take("clicked connect button");
+  yield* take("[ui] clicked connect button");
   const session = OT.initSession(
     process.env.REACT_APP_OT_API_KEY!,
     process.env.REACT_APP_OT_SESSION_ID!
@@ -240,14 +362,14 @@ function* sagaSession() {
     });
   });
   yield* put({
-    type: "connected to session",
+    type: "[saga] connected to session",
   });
   yield* fork(sagaPublisher, session);
 }
 
 const store = createStore(
   reducer,
-  composeWithDevTools(applyMiddleware(sagaMiddleware))
+  composeWithDevTools(applyMiddleware(sagaMiddleware, logger))
 );
 
 sagaMiddleware.run(sagaSession);
@@ -269,9 +391,7 @@ function Session() {
   const connected = useSelector(
     (state: State) => state.session.state === "connected"
   );
-  const publishing = useSelector(
-    (state: State) => state.publisher.state === "publishing"
-  );
+
   const setEl = useCallback(
     (containerEl: HTMLDivElement) => {
       if (containerEl && el) {
@@ -280,23 +400,18 @@ function Session() {
     },
     [el]
   );
+
   return (
     <div>
       session
-      <button onClick={() => void dispatch({ type: "clicked connect button" })}>
+      <button
+        onClick={() => void dispatch({ type: "[ui] clicked connect button" })}
+      >
         {connected ? "disconnect" : "connect"}
       </button>
-      <button
-        onClick={() =>
-          void dispatch({
-            type: publishing
-              ? "clicked stop publishing button"
-              : "clicked start publishing button",
-          })
-        }
-      >
-        {publishing ? "stop" : "start"}
-      </button>
+      <PublisherControls />
+      <Devices kind="videoinput" />
+      <Devices kind="audioinput" />
       <div ref={setEl}></div>
       {subEls.map((el) => (
         <SubscriberVideo video={el} />
@@ -315,6 +430,89 @@ function SubscriberVideo({ video }: { video: HTMLVideoElement }) {
     [video]
   );
   return <div ref={setEl}></div>;
+}
+
+function PublisherControls() {
+  const dispatch = useDispatch();
+  const connected = useSelector(
+    (state: State) => state.session.state === "connected"
+  );
+  const publishing = useSelector(
+    (state: State) => state.publisher.state === "publishing"
+  );
+  const sharingVideo = useSelector((state) => state.sharingVideo);
+  const sharingAudio = useSelector((state) => state.sharingAudio);
+  return (
+    <>
+      {connected ? (
+        <button
+          onClick={() =>
+            void dispatch({
+              type: publishing
+                ? "[ui] clicked stop publishing button"
+                : "[ui] clicked start publishing button",
+            })
+          }
+        >
+          {publishing ? "leave" : "join"}
+        </button>
+      ) : null}
+      {publishing ? (
+        <>
+          <button
+            onClick={() =>
+              void dispatch({
+                type: sharingVideo
+                  ? "[ui] clicked mute video"
+                  : "[ui] clicked share video",
+              })
+            }
+          >
+            {sharingVideo ? "mute" : "share"} video
+          </button>
+          <button
+            onClick={() =>
+              void dispatch({
+                type: sharingAudio
+                  ? "[ui] clicked mute audio"
+                  : "[ui] clicked share audio",
+              })
+            }
+          >
+            {sharingAudio ? "mute" : "share"} audio
+          </button>
+        </>
+      ) : null}
+    </>
+  );
+}
+
+function Devices({ kind }: { kind: MediaDeviceKind }) {
+  const publishing = useSelector(
+    (state: State) => state.publisher.state === "publishing"
+  );
+  const devices = useSelector((state) => state.devices);
+  const dispatch = useDispatch();
+  return publishing ? (
+    <select
+      onChange={(e) =>
+        void dispatch({
+          type: "[ui] device selector changed",
+          payload: {
+            value: e.target.value,
+          },
+        })
+      }
+    >
+      {devices
+        .filter((device) => device.kind === kind)
+        .map((device) => (
+          <option key={device.deviceId} value={device.deviceId}>
+            {device.label}
+          </option>
+        ))}
+    </select>
+  ) : null;
 }
 
 export default App;
