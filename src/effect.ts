@@ -1,13 +1,14 @@
 import "./index.css";
 import "./App.css";
 import * as OT from "@opentok/client";
-import SM, { eventChannel } from "redux-saga";
+import SM, { eventChannel, Task } from "redux-saga";
 import {
   call,
+  cancel,
   fork,
-  put,
+  put as _put,
   select,
-  take,
+  take as _take,
   takeEvery,
   takeLatest,
 } from "typed-redux-saga";
@@ -17,23 +18,15 @@ import {
   useSelector as _useSelector,
 } from "react-redux";
 import { State } from "./state";
+import { AppEvent } from "./event";
 
 export const sagaMiddleware = SM();
 
-type PublisherEvent =
-  | {
-      type: "[saga] publisher stream created";
-      payload: {
-        stream: OT.Stream;
-      };
-    }
-  | {
-      type: "[saga] publisher video element created";
-      payload: {
-        el: HTMLVideoElement;
-      };
-    }
-  | { type: "[saga] publisher stream destroyed" };
+const put = (event: AppEvent) => _put(event);
+const take = (type: AppEvent["type"]) =>
+  // @ts-ignore
+  _take(type);
+
 function* sagaPublisher(session: OT.Session) {
   while (true) {
     yield* take("[ui] clicked start publishing button");
@@ -46,7 +39,7 @@ function* sagaPublisher(session: OT.Session) {
       publishVideo,
       publishAudio,
     });
-    const channel = eventChannel<PublisherEvent>((emit) => {
+    const channel = eventChannel<AppEvent>((emit) => {
       publisher.on({
         streamCreated: (event: any) => {
           emit({
@@ -73,6 +66,9 @@ function* sagaPublisher(session: OT.Session) {
       return () => void session.off();
     });
     session.publish(publisher);
+    yield* put({
+      type: "[saga] publisher published",
+    });
     yield* takeEvery(channel, function* (event) {
       yield* put(event);
     });
@@ -94,26 +90,15 @@ function* sagaPublisher(session: OT.Session) {
   }
 }
 
-type SessionEvent =
-  | {
-      type: "stream created" | "stream destroyed";
-      payload: {
-        stream: OT.Stream;
-      };
-    }
-  | {
-      type:
-        | "session reconnecting"
-        | "session reconnected"
-        | "session disconnected";
-    };
 function* sagaSessionEvents(session: OT.Session) {
-  const channel = eventChannel<SessionEvent>((emit) => {
+  const channel = eventChannel<AppEvent>((emit) => {
     session.on({
+      connectionCreated: (event: any) => {
+        console.log("connectionCreated", event);
+      },
       streamCreated: (event: any) => {
-        console.log("stream created:", event.stream);
         emit({
-          type: "stream created",
+          type: "[saga] stream created",
           payload: {
             stream: event.stream,
           },
@@ -121,7 +106,7 @@ function* sagaSessionEvents(session: OT.Session) {
       },
       streamDestroyed: (event: any) => {
         emit({
-          type: "stream destroyed",
+          type: "[saga] stream destroyed",
           payload: {
             stream: event.stream,
           },
@@ -129,17 +114,17 @@ function* sagaSessionEvents(session: OT.Session) {
       },
       sessionReconnecting: function () {
         emit({
-          type: "session reconnecting",
+          type: "[saga] session reconnecting",
         });
       },
       sessionReconnected: function () {
         emit({
-          type: "session reconnected",
+          type: "[saga] session reconnected",
         });
       },
       sessionDisconnected: function () {
         emit({
-          type: "session disconnected",
+          type: "[saga] disconnected from session",
         });
       },
     });
@@ -151,11 +136,12 @@ function* sagaSessionEvents(session: OT.Session) {
 }
 
 function* sagaSubscriberCreator(session: OT.Session) {
-  yield* takeEvery("stream created", function* (event: any) {
+  yield* takeEvery("[saga] stream created", function* (event: any) {
     const subscriber = session.subscribe(event.payload.stream, {
       // @ts-ignore
       insertDefaultUI: false,
     });
+    subscriber.restrictFrameRate(false);
     const el = yield* call(
       () =>
         new Promise<HTMLVideoElement>((res) =>
@@ -175,7 +161,6 @@ function* sagaSubscriberCreator(session: OT.Session) {
 }
 
 function* deviceWatcher() {
-  console.log("go");
   yield* call(() =>
     navigator.mediaDevices.getUserMedia({
       audio: true,
@@ -199,6 +184,7 @@ function* deviceWatcher() {
     };
   });
   while (true) {
+    // @ts-ignore
     const { devices } = yield* take(changeChannel);
     yield* put({
       type: "[saga] devices changed",
@@ -210,27 +196,39 @@ function* deviceWatcher() {
 }
 
 export function* sagaSession() {
-  yield* take("[ui] clicked connect button");
-  const session = OT.initSession(
-    process.env.REACT_APP_OT_API_KEY!,
-    process.env.REACT_APP_OT_SESSION_ID!
-  );
-  yield* fork(sagaSessionEvents, session);
-  yield* fork(sagaSubscriberCreator, session);
-  yield* call(() => {
-    return new Promise<OT.Session>((res) => {
-      session.connect(process.env.REACT_APP_OT_SESSION_TOKEN!, (err) => {
-        if (err) {
-          console.error(err);
-        } else {
-          console.log("connected");
-        }
-      });
-      session.on("sessionConnected", () => void res(session));
+  while (true) {
+    let tasks: Task[] = [];
+    yield* take("[ui] clicked connect button");
+    const session = OT.initSession(
+      process.env.REACT_APP_OT_API_KEY!,
+      process.env.REACT_APP_OT_SESSION_ID!
+    );
+    yield* put({
+      type: "[saga] session initialized",
     });
-  });
-  yield* put({
-    type: "[saga] connected to session",
-  });
-  yield* fork(sagaPublisher, session);
+    tasks.push(yield* fork(sagaSessionEvents, session));
+    tasks.push(yield* fork(sagaSubscriberCreator, session));
+    yield* call(() => {
+      return new Promise<OT.Session>((res) => {
+        session.connect(process.env.REACT_APP_OT_SESSION_TOKEN!, (err) => {
+          if (err) {
+            console.error(err);
+          } else {
+            console.log("connected");
+          }
+        });
+        session.on("sessionConnected", () => void res(session));
+      });
+    });
+    yield* put({
+      type: "[saga] connected to session",
+    });
+    tasks.push(yield* fork(sagaPublisher, session));
+    yield* take("[ui] clicked disconnect button");
+    session.disconnect();
+    yield* cancel(tasks);
+    yield* put({
+      type: "[saga] disconnected from session",
+    });
+  }
 }

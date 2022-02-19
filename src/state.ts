@@ -7,14 +7,15 @@ import {
   useSelector as _useSelector,
 } from "react-redux";
 import { AppEvent } from "./event";
+import { assertNever } from "./assert-never";
 
 export type State = {
   publisher: {
-    state: "publishing" | "not publishing";
+    state: "publishing" | "not publishing" | "attempting to publish";
     element: HTMLVideoElement | null;
   };
   session: {
-    state: "connected" | "disconnected";
+    state: "connected" | "reconnecting" | "connecting" | "disconnected";
   };
   subscribers: {
     elements: Record<string, HTMLVideoElement>;
@@ -41,6 +42,18 @@ export function reducer(
 ): State {
   return produce(state, (draft) => {
     switch (event.type) {
+      case "[saga] publisher published": {
+        draft.publisher.state = "attempting to publish";
+        break;
+      }
+      case "[saga] session reconnecting": {
+        draft.session.state = "reconnecting";
+        break;
+      }
+      case "[saga] session reconnected": {
+        draft.session.state = "connected";
+        break;
+      }
       case "[ui] clicked mute video": {
         draft.sharingVideo = false;
         break;
@@ -73,6 +86,10 @@ export function reducer(
           event.payload.el;
         break;
       }
+      case "[saga] stream destroyed": {
+        delete draft.subscribers.elements[event.payload.stream.streamId];
+        break;
+      }
       case "[saga] connected to session": {
         draft.session.state = "connected";
         break;
@@ -89,6 +106,25 @@ export function reducer(
         draft.selectedDevice = event.payload.value;
         break;
       }
+      case "[saga] session initialized": {
+        draft.session.state = "connecting";
+        break;
+      }
+      case "[saga] disconnected from session": {
+        draft.session.state = "disconnected";
+        draft.publisher = {
+          state: "not publishing",
+          element: null,
+        };
+        draft.subscribers = {
+          elements: {},
+        };
+        break;
+      }
     }
   });
 }
+
+export const selector = {
+  sessionConnectionState: (state: State) => state.session.state,
+} as const;

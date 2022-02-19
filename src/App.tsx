@@ -3,6 +3,8 @@ import "./App.css";
 import { Provider } from "react-redux";
 import { useCallback } from "react";
 import { store, useDispatch, useSelector } from ".";
+import { selector } from "./state";
+import { assertNever } from "./assert-never";
 
 function App() {
   return (
@@ -16,34 +18,77 @@ function Session() {
   const dispatch = useDispatch();
   const el = useSelector((state) => state.publisher.element);
   const subEls = useSelector((state) =>
-    Object.values(state.subscribers.elements)
+    Object.entries(state.subscribers.elements)
   );
-  const connected = useSelector((state) => state.session.state === "connected");
-
-  const setEl = useCallback(
-    (containerEl: HTMLDivElement) => {
-      if (containerEl && el) {
-        containerEl.appendChild(el);
-      }
-    },
-    [el]
-  );
+  const sessionState = useSelector(selector.sessionConnectionState);
   const sessionName = "room 001";
+  const ConnectButton = () => {
+    switch (sessionState) {
+      case "connected": {
+        return (
+          <button
+            className="w-min bg-transparent hover:bg-slate-900 text-white font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded"
+            onClick={() =>
+              void dispatch({ type: "[ui] clicked disconnect button" })
+            }
+          >
+            disconnect
+          </button>
+        );
+      }
+      case "connecting": {
+        return (
+          <button
+            disabled
+            className="w-min bg-transparent hover:bg-slate-900 text-white font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded"
+          >
+            connecting
+          </button>
+        );
+      }
+      case "disconnected": {
+        return (
+          <button
+            className="w-min bg-transparent hover:bg-slate-900 text-white font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded"
+            onClick={() =>
+              void dispatch({ type: "[ui] clicked connect button" })
+            }
+          >
+            connect
+          </button>
+        );
+      }
+      case "reconnecting": {
+        return (
+          <button
+            disabled
+            className="w-min bg-transparent hover:bg-slate-900 text-white font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded"
+          >
+            re-connecting!
+          </button>
+        );
+      }
+      default: {
+        assertNever(sessionState);
+      }
+    }
+  };
   return (
     <div className="bg-slate-800 text-white w-full p-10 grid grid-flow-row auto-rows-max gap-5">
       <h1 className="text-3xl font-bold">Welcome to {sessionName}</h1>
-      <button
-        className="w-min bg-transparent hover:bg-slate-900 text-white font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded"
-        onClick={() => void dispatch({ type: "[ui] clicked connect button" })}
-      >
-        {connected ? "disconnect" : "connect"}
-      </button>
+      <ConnectButton />
       <PublisherControls />
-
-      <div className="aspect-video bg-slate-900" ref={setEl}></div>
-      {subEls.map((el) => (
-        <SubscriberVideo video={el} />
-      ))}
+      <div
+        style={{
+          display: "grid",
+          gridAutoFlow: "column",
+        }}
+      >
+        {el ? <SubscriberVideo video={el} /> : null}
+        {subEls.map(([id, el]) => (
+          <SubscriberVideo key={id} video={el} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -57,35 +102,64 @@ function SubscriberVideo({ video }: { video: HTMLVideoElement }) {
     },
     [video]
   );
-  return <div className="aspect-video bg-slate-900" ref={setEl}></div>;
+  return <div ref={setEl} />;
 }
 
 function PublisherControls() {
   const dispatch = useDispatch();
-  const connected = useSelector((state) => state.session.state === "connected");
-  const publishing = useSelector(
-    (state) => state.publisher.state === "publishing"
-  );
+  const sessionState = useSelector(selector.sessionConnectionState);
+  const publishingState = useSelector((state) => state.publisher.state);
   const sharingVideo = useSelector((state) => state.sharingVideo);
   const sharingAudio = useSelector((state) => state.sharingAudio);
+  const PublishButton = () => {
+    switch (publishingState) {
+      case "publishing": {
+        return (
+          <button
+            className="bg-transparent hover:bg-slate-900 text-white font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded"
+            onClick={() =>
+              void dispatch({
+                type: "[ui] clicked stop publishing button",
+              })
+            }
+          >
+            leave
+          </button>
+        );
+      }
+      case "not publishing": {
+        return (
+          <button
+            className="bg-transparent hover:bg-slate-900 text-white font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded"
+            onClick={() =>
+              void dispatch({
+                type: "[ui] clicked start publishing button",
+              })
+            }
+          >
+            join
+          </button>
+        );
+      }
+      case "attempting to publish": {
+        return (
+          <button
+            disabled
+            className="bg-transparent hover:bg-slate-900 text-white font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded"
+          >
+            starting
+          </button>
+        );
+      }
+      default: {
+        assertNever(publishingState);
+      }
+    }
+  };
   return (
     <div className="grid grid-flow-col auto-cols-max gap-5">
-      {connected ? (
-        <button
-          className="bg-transparent hover:bg-slate-900 text-white font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded"
-          onClick={() =>
-            void dispatch({
-              // @ts-ignore ???
-              type: publishing
-                ? "[ui] clicked stop publishing button"
-                : "[ui] clicked start publishing button",
-            })
-          }
-        >
-          {publishing ? "leave" : "join"}
-        </button>
-      ) : null}
-      {publishing ? (
+      {sessionState === "connected" ? <PublishButton /> : null}
+      {publishingState === "publishing" ? (
         <>
           <button
             className="bg-transparent hover:bg-slate-900 text-white font-semibold hover:text-white py-2 px-4 border border-blue-500 hover:border-transparent rounded"
