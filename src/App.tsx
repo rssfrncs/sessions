@@ -1,10 +1,11 @@
 import "./App.css";
 
 import { Provider } from "react-redux";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import { store, useDispatch, useSelector } from ".";
 import { selector } from "./state";
 import { assertNever } from "./assert-never";
+import layout from "opentok-layout-js";
 
 function App() {
   return (
@@ -16,7 +17,7 @@ function App() {
 
 function Session() {
   const dispatch = useDispatch();
-  const el = useSelector((state) => state.publisher.element);
+  const els = useSelector((state) => Object.values(state.publishers.element));
   const subEls = useSelector((state) =>
     Object.entries(state.subscribers.elements)
   );
@@ -73,22 +74,65 @@ function Session() {
       }
     }
   };
+  console.log(els, subEls);
   return (
     <div className="bg-slate-800 text-white w-full p-10 grid grid-flow-row auto-rows-max gap-5">
       <h1 className="text-3xl font-bold">Welcome to {sessionName}</h1>
       <ConnectButton />
-      <PublisherControls />
+      {<PublisherControls />}
       <div
         style={{
           display: "grid",
           gridAutoFlow: "column",
         }}
       >
-        {el ? <SubscriberVideo video={el} /> : null}
-        {subEls.map(([id, el]) => (
-          <SubscriberVideo key={id} video={el} />
-        ))}
+        <Grid els={[...els, ...subEls.map(([, el]) => el)]} />
       </div>
+    </div>
+  );
+}
+
+function Grid({ els }: { els: HTMLVideoElement[] }) {
+  const width = 500;
+  const height = 500;
+  const grid = useMemo(() => {
+    const { boxes } = layout({
+      containerWidth: width,
+      containerHeight: height,
+      maxRatio: 1.0 / (16 / 9),
+      minRatio: 1,
+    }).getLayout(
+      els.map(() => ({
+        big: false,
+        height: 0,
+        width: 0,
+      }))
+    );
+    return boxes;
+  }, [els, width, height]);
+  console.log(grid, els);
+  return (
+    <div
+      style={{
+        position: "relative",
+        height,
+        width,
+      }}
+    >
+      {grid.map((box, id) => (
+        <div
+          key={id}
+          style={{
+            position: "absolute",
+            top: box.top,
+            left: box.left,
+            width: box.width,
+            height: box.height,
+          }}
+        >
+          <SubscriberVideo video={els[id]} />
+        </div>
+      ))}
     </div>
   );
 }
@@ -97,18 +141,24 @@ function SubscriberVideo({ video }: { video: HTMLVideoElement }) {
   const setEl = useCallback(
     (containerEl: HTMLDivElement) => {
       if (containerEl && video) {
+        video.style.height = "100%";
+        video.style.width = "100%";
+        video.style.objectFit = "cover";
         containerEl.appendChild(video);
       }
     },
     [video]
   );
-  return <div ref={setEl} />;
+  return <div style={{ width: "100%", height: "100%" }} ref={setEl} />;
 }
 
 function PublisherControls() {
   const dispatch = useDispatch();
   const sessionState = useSelector(selector.sessionConnectionState);
-  const publishingState = useSelector((state) => state.publisher.state);
+  const publishingState = useSelector(
+    (state) =>
+      Object.values(state.publishers.state)[0] ?? ("not publishing" as const)
+  );
   const sharingVideo = useSelector((state) => state.sharingVideo);
   const sharingAudio = useSelector((state) => state.sharingAudio);
   const PublishButton = () => {
@@ -195,7 +245,7 @@ function PublisherControls() {
 
 function Devices({ kind }: { kind: MediaDeviceKind }) {
   const publishing = useSelector(
-    (state) => state.publisher.state === "publishing"
+    (state) => Object.values(state.publishers.state)[0] === "publishing"
   );
   const devices = useSelector((state) => state.devices);
   const dispatch = useDispatch();

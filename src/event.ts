@@ -1,7 +1,10 @@
+import { Publisher } from "@opentok/client";
+
 export type AppEvent =
   | {
       type: "[saga] publisher video element created";
       payload: {
+        publisher: Publisher;
         el: HTMLVideoElement;
       };
     }
@@ -33,26 +36,27 @@ export type AppEvent =
   | {
       type: "[saga] publisher stream created";
       payload: {
+        publisher: Publisher;
         stream: OT.Stream;
-      };
-    }
-  | {
-      type: "[saga] publisher video element created";
-      payload: {
-        el: HTMLVideoElement;
       };
     }
   | {
       type:
         | "[saga] publisher published"
+        | "[saga] publisher stream destroyed"
+        | "[saga] publisher stream created";
+
+      payload: {
+        publisher: Publisher;
+      };
+    }
+  | {
+      type:
         | "[saga] session initialized"
         | "[saga] connected to session"
-        | "[saga] publisher stream created"
-        | "[saga] publisher stream destroyed"
         | "[saga] session reconnecting"
         | "[saga] session reconnected"
         | "[saga] session disconnected"
-        | "[saga] publisher stream destroyed"
         | "[saga] disconnected from session"
         | "[ui] clicked start publishing button"
         | "[ui] clicked stop publishing button"

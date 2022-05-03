@@ -22,6 +22,10 @@ import { AppEvent } from "./event";
 
 export const sagaMiddleware = SM();
 
+const session_id = "";
+const token = "";
+const partner_id = "";
+
 const put = (event: AppEvent) => _put(event);
 const take = (type: AppEvent["type"]) =>
   // @ts-ignore
@@ -33,60 +37,82 @@ function* sagaPublisher(session: OT.Session) {
     yield* fork(deviceWatcher);
     const publishVideo = yield* select((state: State) => state.sharingVideo);
     const publishAudio = yield* select((state: State) => state.sharingAudio);
-    const publisher = OT.initPublisher({
-      // @ts-ignore
-      insertDefaultUI: false,
-      publishVideo,
-      publishAudio,
-    });
-    const channel = eventChannel<AppEvent>((emit) => {
-      publisher.on({
-        streamCreated: (event: any) => {
-          emit({
-            type: "[saga] publisher stream created",
-            payload: {
-              stream: event.stream,
-            },
-          });
-        },
-        videoElementCreated: (event: any) => {
-          emit({
-            type: "[saga] publisher video element created",
-            payload: {
-              el: event.element,
-            },
-          });
-        },
-        streamDestroyed: () => {
-          emit({
-            type: "[saga] publisher stream destroyed",
-          });
+
+    const publishers: OT.Publisher[] = [];
+    for (let i = 0; i < 10; i++) {
+      const publisher = OT.initPublisher({
+        // @ts-ignore
+        insertDefaultUI: false,
+        publishVideo,
+        publishAudio,
+      });
+      publishers.push(publisher);
+      const channel = eventChannel<AppEvent>((emit) => {
+        publisher.on({
+          streamCreated: (event: any) => {
+            emit({
+              type: "[saga] publisher stream created",
+              payload: {
+                publisher,
+                stream: event.stream,
+              },
+            });
+          },
+          videoElementCreated: (event: any) => {
+            emit({
+              type: "[saga] publisher video element created",
+              payload: {
+                publisher,
+                el: event.element,
+              },
+            });
+          },
+          streamDestroyed: () => {
+            emit({
+              type: "[saga] publisher stream destroyed",
+              payload: {
+                publisher,
+              },
+            });
+          },
+        });
+        return () => void session.off();
+      });
+      session.publish(publisher);
+      yield* put({
+        type: "[saga] publisher published",
+        payload: {
+          publisher,
         },
       });
-      return () => void session.off();
-    });
-    session.publish(publisher);
-    yield* put({
-      type: "[saga] publisher published",
-    });
-    yield* takeEvery(channel, function* (event) {
-      yield* put(event);
-    });
-    yield* takeLatest("[ui] clicked mute video", function* mutePublisher() {
-      publisher.publishVideo(false);
-    });
-    yield* takeLatest("[ui] clicked share video", function* unmutePublisher() {
-      publisher.publishVideo(true);
-    });
-    yield* takeLatest("[ui] clicked mute audio", function* mutePublisher() {
-      publisher.publishAudio(false);
-    });
-    yield* takeLatest("[ui] clicked share audio", function* unmutePublisher() {
-      publisher.publishAudio(true);
-    });
+      yield* takeEvery(channel, function* (event) {
+        yield* put(event);
+      });
+      yield* takeLatest("[ui] clicked mute video", function* mutePublisher() {
+        publisher.publishVideo(false);
+      });
+      yield* takeLatest(
+        "[ui] clicked share video",
+        function* unmutePublisher() {
+          publisher.publishVideo(true);
+        }
+      );
+      yield* takeLatest("[ui] clicked mute audio", function* mutePublisher() {
+        publisher.publishAudio(false);
+      });
+      yield* takeLatest(
+        "[ui] clicked share audio",
+        function* unmutePublisher() {
+          publisher.publishAudio(true);
+        }
+      );
+    }
     yield* take("[ui] clicked stop publishing button");
-    session.unpublish(publisher);
-    publisher.destroy();
+
+    publishers.forEach((publisher) => {
+      session.unpublish(publisher);
+      publisher.destroy();
+    });
   }
 }
 
@@ -199,10 +225,7 @@ export function* sagaSession() {
   while (true) {
     let tasks: Task[] = [];
     yield* take("[ui] clicked connect button");
-    const session = OT.initSession(
-      process.env.REACT_APP_OT_API_KEY!,
-      process.env.REACT_APP_OT_SESSION_ID!
-    );
+    const session = OT.initSession(partner_id, session_id);
     yield* put({
       type: "[saga] session initialized",
     });
@@ -210,7 +233,7 @@ export function* sagaSession() {
     tasks.push(yield* fork(sagaSubscriberCreator, session));
     yield* call(() => {
       return new Promise<OT.Session>((res) => {
-        session.connect(process.env.REACT_APP_OT_SESSION_TOKEN!, (err) => {
+        session.connect(token, (err) => {
           if (err) {
             console.error(err);
           } else {

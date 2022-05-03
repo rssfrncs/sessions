@@ -7,12 +7,14 @@ import {
   useSelector as _useSelector,
 } from "react-redux";
 import { AppEvent } from "./event";
-import { assertNever } from "./assert-never";
 
 export type State = {
-  publisher: {
-    state: "publishing" | "not publishing" | "attempting to publish";
-    element: HTMLVideoElement | null;
+  publishers: {
+    element: Record<string, HTMLVideoElement>;
+    state: Record<
+      string,
+      "publishing" | "not publishing" | "attempting to publish"
+    >;
   };
   session: {
     state: "connected" | "reconnecting" | "connecting" | "disconnected";
@@ -28,7 +30,10 @@ export type State = {
 
 export function reducer(
   state: State = {
-    publisher: { state: "not publishing", element: null },
+    publishers: {
+      element: {},
+      state: {},
+    },
     session: { state: "disconnected" },
     subscribers: {
       elements: {},
@@ -43,7 +48,9 @@ export function reducer(
   return produce(state, (draft) => {
     switch (event.type) {
       case "[saga] publisher published": {
-        draft.publisher.state = "attempting to publish";
+        // @ts-ignore
+        draft.publishers.state[event.payload.publisher.streamId] =
+          "attempting to publish" as const;
         break;
       }
       case "[saga] session reconnecting": {
@@ -76,8 +83,10 @@ export function reducer(
         break;
       }
       case "[saga] publisher video element created": {
+        console.log("el created", event.payload);
         // @ts-ignore
-        draft.publisher.element = event.payload.el;
+        draft.publishers.element[event.payload.publisher.streamId] =
+          event.payload.el;
         break;
       }
       case "[saga] subscriber stream video element created": {
@@ -95,11 +104,15 @@ export function reducer(
         break;
       }
       case "[saga] publisher stream created": {
-        draft.publisher.state = "publishing";
+        // @ts-ignore
+        draft.publishers.state[event.payload.publisher.streamId] =
+          "publishing" as const;
         break;
       }
       case "[saga] publisher stream destroyed": {
-        draft.publisher.state = "not publishing";
+        // @ts-ignore
+        draft.publishers.state[event.payload.publisher.streamId] =
+          "not publishing" as const;
         break;
       }
       case "[ui] device selector changed": {
@@ -112,9 +125,9 @@ export function reducer(
       }
       case "[saga] disconnected from session": {
         draft.session.state = "disconnected";
-        draft.publisher = {
-          state: "not publishing",
-          element: null,
+        draft.publishers = {
+          state: {},
+          element: {},
         };
         draft.subscribers = {
           elements: {},
